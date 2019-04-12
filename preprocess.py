@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np 
 
 
-vocab_size = 4000
+vocab_size = 16000
 unknown_token = "<unk>"
 start_token = "<s>"
 end_token = "</s>"
@@ -25,13 +25,15 @@ def load_dataset():
 
 	# build a vocabulary from the most common words
 	word_freq = nltk.FreqDist((itertools.chain(*tokenized_tweets)))
-	vocab = word_freq.most_common(vocab_size-1)
+	vocab = word_freq.most_common(vocab_size)
 
-	index_to_word = {index:word[0] for index,word in enumerate(vocab)}
-	index_to_word[vocab_size-1] = unknown_token
+	index_to_word = {(index+1):word[0] for index,word in enumerate(vocab)}
+	index_to_word[vocab_size] = unknown_token
 
-	word_to_index = {word[0]:index for index,word in enumerate(vocab)}
-	word_to_index[unknown_token] = vocab_size-1
+	word_to_index = {word[0]:(index+1) for index,word in enumerate(vocab)}
+	word_to_index[unknown_token] = vocab_size
+
+	unknown_lookup = [x for x in word_freq if x not in word_to_index]
 
 	# process original tweets to replace rare words with the unknown token
 	for index,tweet in enumerate(tokenized_tweets):
@@ -41,23 +43,11 @@ def load_dataset():
 	X_train = np.asarray([[word_to_index[twit] for twit in tweet[:-1]] for tweet in tokenized_tweets])
 	Y_train = np.asarray([[word_to_index[twit] for twit in tweet[1:]] for tweet in tokenized_tweets])
 
-	X = np.zeros((X_train.shape[0], longest_seq))
-	for row in range(X_train.shape[0]):
-		for col in range(len(X_train[row])):
-			X[row][col] = X_train[row][col]
+	# print("X_train shape: {}".format(X_train.shape))
+	# print("Y_train.shape: {}".format(Y_train.shape))
+	# print(X_train[1])
+	# print(Y_train[1])
 
-	Y = np.zeros((Y_train.shape[0], longest_seq))
-	for row in range(Y_train.shape[0]):
-		for col in range(len(Y_train[row])):
-			Y[row][col] = Y_train[row][col]
-
-	X_train = X
-	Y_train = Y 
-
-	print("X_train shape: {}".format(X_train.shape))
-	print("Y_train.shape: {}".format(Y_train.shape))
-	print(X_train[0])
-
-	return X_train,Y_train, index_to_word, word_to_index, vocab_size
+	return X_train,Y_train, index_to_word, word_to_index, vocab_size, unknown_lookup
 
 # load_dataset()

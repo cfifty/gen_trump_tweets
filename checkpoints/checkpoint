@@ -1,0 +1,4 @@
+model_checkpoint_path: "trump_lstm-4"
+all_model_checkpoint_paths: "trump_lstm-2"
+all_model_checkpoint_paths: "trump_lstm-3"
+all_model_checkpoint_paths: "trump_lstm-4"
