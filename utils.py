@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np 
 
 
-vocab_size = 4000
+vocab_size = 16000
 unknown_token = "<unk>"
 start_token = "<s>"
 end_token = "</s>"
@@ -43,11 +43,35 @@ def load_dataset():
 	X_train = np.asarray([[word_to_index[twit] for twit in tweet[:-1]] for tweet in tokenized_tweets])
 	Y_train = np.asarray([[word_to_index[twit] for twit in tweet[1:]] for tweet in tokenized_tweets])
 
-	# print("X_train shape: {}".format(X_train.shape))
-	# print("Y_train.shape: {}".format(Y_train.shape))
-	# print(X_train[1])
-	# print(Y_train[1])
-
 	return X_train,Y_train, index_to_word, word_to_index, vocab_size, unknown_lookup
 
-# load_dataset()
+def gen_tweets(sess, num_tweets, top_n, index_to_word, unknown_lookup, num_layers, batch_size, num_hidden_units):
+	for _ in range(num_tweets):
+		sentence = []
+		counter = 0
+		next_token = np.ones((128,1)) # start token 
+		next_LSTM_state = np.zeros((num_layers, 2, batch_size, num_hidden_units))
+		
+		# while an end token hasn't been generated
+		while(next_token[0] != 2): 
+			gen_word = index_to_word[next_token[0][0]]
+			if gen_word == unknown_token:
+				gen_word = unknown_lookup[np.random.randint(len(unknown_lookup))]
+			sentence.append(gen_word)
+
+			preds, next_LSTM_state = sess.run([logits_final, H], feed_dict={X_batch:next_token, LSTM_state:next_LSTM_state})
+
+			# sample from probabilities
+			p = np.squeeze(preds[0]) # get the first row... can delete when you fix variable batch size...
+			p[np.argsort(p)][:-top_n] = 0 # set the first n - top_n indices to 0
+			p = p/np.sum(p)
+			index = np.random.choice(vocab_size, 1, p=p)[0]
+
+			next_token = np.ones((128,1))*index
+			counter += 1
+
+			if counter > 20: # let's say tweets can't be > 20 words...
+				break
+
+		sentence = sentence[1:] # get rid of the <s> token
+		print(" ".join(sentence))

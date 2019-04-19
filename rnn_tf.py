@@ -1,23 +1,58 @@
 import os
+import utils
 
 import numpy as np
 import tensorflow as tf
 
-from preprocess import load_dataset
-
-X_train, Y_train, index_to_word, word_to_index, vocab_size, unknown_lookup = load_dataset()
+X_train, Y_train, index_to_word, word_to_index, vocab_size, unknown_lookup = utils.load_dataset()
 vocab_size += 1 # due to using 0 as a padding...
 
 # define neural net constants 
-num_epochs = 500
+num_epochs = 31
 batch_size = 128
-num_hidden_units = 200
-num_layers = 3
+num_hidden_units = 100
+num_layers = 2
 embedding_dim = 300
 num_batches = (X_train.shape[0])//batch_size
 lr = 0.01
 save_rate = 10 
+top_n = 4
+num_gen_tweets = 20
 unknown_token = "<unk>"
+
+def gen_tweets(sess, num_tweets):
+	for _ in range(num_tweets):
+		sentence = []
+		counter = 0
+		next_token = np.ones((128,1)) # start token 
+		next_LSTM_state = np.zeros((num_layers, 2, batch_size, num_hidden_units))
+		
+		# while an end token hasn't been generated
+		while(next_token[0] != 2): 
+			gen_word = index_to_word[next_token[0][0]]
+			if gen_word == unknown_token:
+				gen_word = unknown_lookup[np.random.randint(len(unknown_lookup))]
+			sentence.append(gen_word)
+
+			preds, next_LSTM_state = sess.run([logits_final, H], feed_dict={X_batch:next_token, LSTM_state:next_LSTM_state})
+
+			# sample from probabilities
+			p = np.squeeze(preds[0]) # get the first row... can delete when you fix variable batch size...
+			p[np.argsort(p)][:-top_n] = 0 # set the first n - top_n indices to 0
+			p = p/np.sum(p)
+			index = np.random.choice(vocab_size, 1, p=p)[0]
+
+			next_token = np.ones((128,1))*index
+			counter += 1
+
+			if counter > 20: # let's say tweets can't be > 20 words...
+				break
+
+		sentence = sentence[1:] # get rid of the <s> token
+		print(" ".join(sentence))
+
+
+
 
 # define placeholders: input, output, and rnn hidden state
 X_batch = tf.placeholder(tf.int32, shape=(batch_size, None))							# shape: (batch size x max_seq_len)
@@ -57,23 +92,24 @@ logits = tf.contrib.layers.fully_connected(outputs, vocab_size, activation_fn=No
 logits = tf.reshape(logits, shape=(batch_size, -1, vocab_size)) # expand back out to (batch_size x max_seq_len x vocab_size)
 logits_final = tf.nn.softmax(logits, name='logits_final')
 
-# commented out for custom cross-entropy cost function
-# labels = tf.reshape(Y_one_hot, shape=(-1, vocab_size))				# labels: batch_size*max_seq_length x vocab size
-# labels = tf.cast(labels, tf.float32) 
-# losses = tf.nn.softmax_cross_entropy_with_logits(labels=labels, logits=logits)
-# total_loss = tf.reduce_mean(losses)
-
 # compute the loss -- special since we're considering variable sequence lengths
 labels = tf.cast(Y_one_hot, tf.float32)
-cross_entropy = labels * tf.log(logits_final)
+cross_entropy = labels * tf.log(tf.clip_by_value(logits_final,1e-10, 1e10)) 
 cross_entropy = -tf.reduce_sum(cross_entropy,axis=2) # sum the cross entropy along the vocab_size axis into a single value
 cross_entropy *= mask # eliminate the cross_entropy values from time steps that are padding
 cross_entropy = tf.reduce_sum(cross_entropy, axis=1) # sum cross entropy along the time_steps axis
 cross_entropy /= tf.reduce_sum(mask,axis=1) # collapse the mask into (batch_size, ) and sum it to get the sequence length for each example -- divide each sequence by its length to normalize it
 cross_entropy = tf.reduce_mean(cross_entropy)
 
-total_loss = cross_entropy
+# with tf.name_scope('total_loss'):
+total_loss = cross_entropy	
+	# tf.summary.scalar(total_loss, 'total_loss')
+
+# with tf.name_scope('train'):
 optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(total_loss)
+
+# merged = tf.summary.merge_all()
+# writer = tf.summary.FileWriter('tensorboard/train')
 
 saver = tf.train.Saver(max_to_keep=3)
 
@@ -112,52 +148,23 @@ with tf.Session() as sess:
 					X_mat[row][col] += X[row][col]
 					Y_mat[row][col] += Y[row][col]
 
-
-			# print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)) # prints out all trainable variables in the dataflow graph :O 
-			# print("first example mask: {}".format(sess.run(mask, feed_dict={X_batch:X_mat, Y_batch:Y_mat, LSTM_state:init_LSTM_state})[0,:]))
-			# print("biases added to each index in vocab: {}".format(sess.run("fully_connected/biases:0", feed_dict={X_batch:X_mat, Y_batch:Y_mat, LSTM_state:init_LSTM_state})))
-
 			_, minibatch_cost = sess.run([optimizer, total_loss], feed_dict={
 																				X_batch:X_mat, 
 																				Y_batch:Y_mat, 
 																				LSTM_state:init_LSTM_state,
 																			})
-
 			loss_list.append(minibatch_cost)
+			# writer.add_summary(summary, global_step=epoch_idx)
 
 		print("epoch loss: {}".format(np.average(loss_list)))
 		if epoch_idx % save_rate == 0:
 			saver.save(sess, 'checkpoints/trump_lstm', global_step=epoch_idx)
-	# put in inference mode
-	for _ in range(200):
-		sentence = []
-		counter = 0
-		next_token = np.ones((128,1)) # start token
-		next_LSTM_state = np.zeros((num_layers, 2, batch_size, num_hidden_units))
 
-		# while an end token hasn't been generated...
-		while(next_token[0] != 2): 
-			gen_word = index_to_word[next_token[0][0]]
-			if gen_word == unknown_token:
-				gen_word = unknown_lookup[np.random.randint(len(unknown_lookup))]
-			sentence.append(gen_word)
+		if epoch_idx % 10 == 0:
+			print("generating 10 donald trump quotations\n")
+			gen_tweets(sess, num_gen_tweets)
 
-			preds, next_LSTM_state = sess.run([logits_final, H], feed_dict={X_batch:next_token, LSTM_state:next_LSTM_state})
 
-			# sample from probabilities
-			p = np.squeeze(preds[0])
-			p = p/np.sum(p)
-			index = np.random.choice(vocab_size, 1, p=p)[0]
-
-			next_token = np.ones((128,1))*index
-			counter += 1
-
-			if counter > 20:
-				print("counter is greater than 20... breaking")
-				break
-
-		sentence = sentence[1:] # get rid of the <s> token
-		print(" ".join(sentence))
 
 
 
