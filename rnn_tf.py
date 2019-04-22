@@ -51,15 +51,14 @@ def gen_tweets(sess, num_tweets):
 		sentence = sentence[1:] # get rid of the <s> token
 		print(" ".join(sentence))
 
-
-
-
 # define placeholders: input, output, and rnn hidden state
-X_batch = tf.placeholder(tf.int32, shape=(batch_size, None))							# shape: (batch size x max_seq_len)
-X_one_hot = tf.one_hot(X_batch, vocab_size, on_value=1, off_value=0)					# convert to one-hot encoding
+with tf.name_scope("placeholder_scope"):
+	X_batch = tf.placeholder(tf.int32, shape=(batch_size, None), name="X_batch")							# shape: (batch size x max_seq_len)
+	Y_batch = tf.placeholder(tf.int32, shape=(batch_size, None), name="Y_batch")
 
-Y_batch = tf.placeholder(tf.int32, shape=(batch_size, None))
-Y_one_hot = tf.one_hot(Y_batch, vocab_size, on_value=1, off_value=0) 					# shape: (batch size x max_seq_len x vocab size = depth)
+with tf.name_scope("training_labels"):
+	Y_one_hot = tf.one_hot(Y_batch, vocab_size, on_value=1, off_value=0, name="Y_one_hot") 					# shape: (batch size x max_seq_len x vocab size = depth)
+	labels = tf.cast(Y_one_hot, tf.float32, name="training_labels")
 
 # determine the length of this batch's max sequence -- for per-example sequence shortening -- don't update based on paddings
 length = tf.cast(tf.reduce_sum(tf.sign(X_batch), 1), tf.int32)
@@ -93,7 +92,6 @@ logits = tf.reshape(logits, shape=(batch_size, -1, vocab_size)) # expand back ou
 logits_final = tf.nn.softmax(logits, name='logits_final')
 
 # compute the loss -- special since we're considering variable sequence lengths
-labels = tf.cast(Y_one_hot, tf.float32)
 cross_entropy = labels * tf.log(tf.clip_by_value(logits_final,1e-10, 1e10)) 
 cross_entropy = -tf.reduce_sum(cross_entropy,axis=2) # sum the cross entropy along the vocab_size axis into a single value
 cross_entropy *= mask # eliminate the cross_entropy values from time steps that are padding
@@ -101,9 +99,8 @@ cross_entropy = tf.reduce_sum(cross_entropy, axis=1) # sum cross entropy along t
 cross_entropy /= tf.reduce_sum(mask,axis=1) # collapse the mask into (batch_size, ) and sum it to get the sequence length for each example -- divide each sequence by its length to normalize it
 cross_entropy = tf.reduce_mean(cross_entropy)
 
-# with tf.name_scope('total_loss'):
 total_loss = cross_entropy	
-	# tf.summary.scalar(total_loss, 'total_loss')
+tf.summary.scalar('total_loss', total_loss)
 
 # with tf.name_scope('train'):
 optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(total_loss)
@@ -113,11 +110,18 @@ optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(total_loss)
 
 saver = tf.train.Saver(max_to_keep=3)
 
+merged = tf.summary.merge_all()
+# merged_writer = tf.summary.FileWriter("tensorboard/") # not sure if this'll work here... try before and then add_graph() later...
+
 init = tf.global_variables_initializer()
 
 # train 
 with tf.Session() as sess:
+
 	sess.run(init)
+
+	merged_writer = tf.summary.FileWriter("tensorboard/",sess.graph) # not sure if this'll work here... try before and then add_graph() later...
+
 	loss_list = []
 
 	for epoch_idx in range(num_epochs):
@@ -148,11 +152,12 @@ with tf.Session() as sess:
 					X_mat[row][col] += X[row][col]
 					Y_mat[row][col] += Y[row][col]
 
-			_, minibatch_cost = sess.run([optimizer, total_loss], feed_dict={
-																				X_batch:X_mat, 
-																				Y_batch:Y_mat, 
-																				LSTM_state:init_LSTM_state,
-																			})
+			_, minibatch_cost, summary = sess.run([optimizer, total_loss, merged], feed_dict={
+																						X_batch:X_mat, 
+																						Y_batch:Y_mat, 
+																						LSTM_state:init_LSTM_state,
+																					})
+			merged_writer.add_summary(summary, epoch_idx)
 			loss_list.append(minibatch_cost)
 			# writer.add_summary(summary, global_step=epoch_idx)
 
